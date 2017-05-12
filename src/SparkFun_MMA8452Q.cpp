@@ -14,7 +14,7 @@ Development environment specifics:
 	Hardware Platform: Arduino Uno
 
 	**Updated for Arduino 1.6.4 5/2015**
-	
+
 This code is beerware; if you see me (or any other SparkFun employee) at the
 local, and you've found our code helpful, please buy us a round!
 
@@ -30,9 +30,10 @@ Distributed as-is; no warranty is given.
 //   supplied address into a private variable for future use.
 //   The variable addr should be either 0x1C or 0x1D, depending on which voltage
 //   the SA0 pin is tied to (GND or 3.3V respectively).
-MMA8452Q::MMA8452Q(byte addr)
+// MMA8452Q::MMA8452Q(byte addr)
+MMA8452Q::MMA8452Q( void )
 {
-	address = addr; // Store address into private variable
+	// address = addr; // Store address into private variable
 }
 
 // INITIALIZATION
@@ -40,29 +41,31 @@ MMA8452Q::MMA8452Q(byte addr)
 //	or 8g), output data rate, portrait/landscape detection and tap detection.
 //	It also checks the WHO_AM_I register to make sure we can communicate with
 //	the sensor. Returns a 0 if communication failed, 1 if successful.
-byte MMA8452Q::init(MMA8452Q_Scale fsr, MMA8452Q_ODR odr)
+byte MMA8452Q::init(byte addr, MMA8452Q_Scale fsr, MMA8452Q_ODR odr)
 {
+	address = addr; // Store address into private variable
+
 	scale = fsr; // Haul fsr into our class variable, scale
-	
+
 	Wire.begin(); // Initialize I2C
-	
+
 	byte c = readRegister(WHO_AM_I);  // Read WHO_AM_I register
-	
+
 	if (c != 0x2A) // WHO_AM_I should always be 0x2A
 	{
 		return 0;
 	}
-	
+
 	standby();  // Must be in standby to change registers
-	
+
 	setScale(scale);  // Set up accelerometer scale
 	setODR(odr);  // Set up output data rate
 	setupPL();  // Set up portrait/landscape detection
 	// Multiply parameter by 0.0625g to calculate threshold.
 	setupTap(0x80, 0x80, 0x08); // Disable x, y, set z to 0.5g
-	
+
 	active();  // Set to active to start reading
-	
+
 	return 1;
 }
 
@@ -73,18 +76,21 @@ byte MMA8452Q::init(MMA8452Q_Scale fsr, MMA8452Q_ODR odr)
 //		  of the acceleromter.
 //		* floats cx, cy, and cz will store the calculated acceleration from
 //		  those 12-bit values. These variables are in units of g's.
-void MMA8452Q::read()
-{
+int MMA8452Q::read() {
 	byte rawData[6];  // x/y/z accel register data stored here
 
-	readRegisters(OUT_X_MSB, rawData, 6);  // Read the six raw data registers into data array
-	
+	if (0 != readRegisters(OUT_X_MSB, rawData, 6)) {  // Read the six raw data registers into data array
+		return 1;
+	}
+
 	x = ((short)(rawData[0]<<8 | rawData[1])) >> 4;
 	y = ((short)(rawData[2]<<8 | rawData[3])) >> 4;
 	z = ((short)(rawData[4]<<8 | rawData[5])) >> 4;
 	cx = (float) x / (float)(1<<11) * (float)(scale);
 	cy = (float) y / (float)(1<<11) * (float)(scale);
 	cz = (float) z / (float)(1<<11) * (float)(scale);
+
+	return 0;
 }
 
 // CHECK IF NEW DATA IS AVAILABLE
@@ -109,7 +115,7 @@ void MMA8452Q::setScale(MMA8452Q_Scale fsr)
 
 // SET THE OUTPUT DATA RATE
 //	This function sets the output data rate of the MMA8452Q.
-//	Possible values for the odr parameter are: ODR_800, ODR_400, ODR_200, 
+//	Possible values for the odr parameter are: ODR_800, ODR_400, ODR_200,
 //	ODR_100, ODR_50, ODR_12, ODR_6, or ODR_1
 void MMA8452Q::setODR(MMA8452Q_ODR odr)
 {
@@ -161,7 +167,7 @@ void MMA8452Q::setupTap(byte xThs, byte yThs, byte zThs)
 }
 
 // READ TAP STATUS
-//	This function returns any taps read by the MMA8452Q. If the function 
+//	This function returns any taps read by the MMA8452Q. If the function
 //	returns no new taps were detected. Otherwise the function will return the
 //	lower 7 bits of the PULSE_SRC register.
 byte MMA8452Q::readTap()
@@ -195,7 +201,7 @@ void MMA8452Q::setupPL()
 byte MMA8452Q::readPL()
 {
 	byte plStat = readRegister(PL_STATUS);
-	
+
 	if (plStat & 0x40) // Z-tilt lockout
 		return LOCKOUT;
 	else // Otherwise return LAPO status
@@ -247,7 +253,9 @@ byte MMA8452Q::readRegister(MMA8452Q_Register reg)
 
 	Wire.requestFrom(address, (byte) 1); //Ask for 1 byte, once done, bus is released by default
 
-	while(!Wire.available()) ; //Wait for the data to come back
+	time_t startTime = millis();
+	while(!Wire.available() && millis() - startTime < 100) ; //Wait for the data to come back
+	if (!Wire.available()) return 0;
 
 	return Wire.read(); //Return this one byte
 }
@@ -255,7 +263,7 @@ byte MMA8452Q::readRegister(MMA8452Q_Register reg)
 // READ MULTIPLE REGISTERS
 //	Read "len" bytes from the MMA8452Q, starting at register "reg". Bytes are stored
 //	in "buffer" on exit.
-void MMA8452Q::readRegisters(MMA8452Q_Register reg, byte *buffer, byte len)
+int MMA8452Q::readRegisters(MMA8452Q_Register reg, byte *buffer, byte len)
 {
 	Wire.beginTransmission(address);
 	Wire.write(reg);
@@ -263,8 +271,14 @@ void MMA8452Q::readRegisters(MMA8452Q_Register reg, byte *buffer, byte len)
 
 	Wire.requestFrom(address, len); //Ask for bytes, once done, bus is released by default
 
-	while(Wire.available() < len); //Hang out until we get the # of bytes we expect
+	time_t startTime = millis();
+	while(Wire.available() < len && millis() - startTime < 100); //Hang out until we get the # of bytes we expect
+	if (Wire.available() < len) {
+		return 1;
+	}
 
 	for(int x = 0 ; x < len ; x++)
-		buffer[x] = Wire.read();    
+		buffer[x] = Wire.read();
+
+	return 0;
 }
